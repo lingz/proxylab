@@ -3,6 +3,7 @@
  *
  * TEAM MEMBERS:
  *     Lingliang Zhang, lz781@nyu.edu 
+ *     Oleg Grishin, og402@nyu.edu 
  * 
  * IMPORTANT: A simple HTTP Proxy
  * that is able to utilize multiple threads
@@ -31,32 +32,72 @@ FILE *logfile;
 void response_controller(int connfd)
 {
   size_t n;
-  int port = 0;
+  int port = 0, serverfd;
   size_t totalByteCount = 0;
-  char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE];
-  rio_t rio;
-  Rio_readinitb(&rio, connfd);
+  char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE],
+       method[16], version[16], leadLine[MAXLINE];
+  rio_t rio_client;
+  rio_t rio_server;
+  Rio_readinitb(&rio_client, connfd);
 
   // handle first line, extract uri
   int stageCounter = 0;
-  char uri[MAXLINE];
-  n = Rio_readlineb(&rio, buf, MAXLINE);
+  char *token;
+  n = Rio_readlineb(&rio_client, buf, MAXLINE);
   totalByteCount += n;
-  printf("%s", buf);
   Rio_writen(connfd, buf, n);
 
-  int i;
-  for (i=0; buf[i] != ' '; i++) {
+  // tokenize the url to send the path to parse_uri
+  token = strtok(buf, " ");
+  while (token != NULL) {
+    switch (stageCounter++)
+    {
+      case 0:
+        strcpy(method, token);
+        break;
+      case 1:
+        printf("uri: %s\n", token);
+        if (parse_uri(token, hostname, path, &port) == -1) {
+          printf("trying to close \n");
+          Close(connfd);
+          printf("done losing \n");
+          return;
+        }
+        break;
+      case 2:
+        strcpy(version, token);
+        break;
+    }   
+    token = strtok(NULL, " ");
   }
-  printf("uri: %s\n", &buf[i]);
-  parse_uri(&buf[++i], hostname, path, &port);
   printf("Hostname %s, Path %s, Port %d\n", hostname, path, port);
+
+  // after a successful request, connect to the server
+  serverfd = Open_clientfd(hostname, port);
+  Rio_readinitb(&rio_server, serverfd);
+
+  // Write the initial header to the server
+  if (path[0] == '\0') {
+    path[0] = '/';
+    path[1] = '\0';
+  }
+  sprintf(leadLine, "%s %s %s\r\n", method, path, version);
+  printf("Leading line is: %s\n", leadLine);
+  Rio_writen(serverfd, leadLine, strlen(leadLine));
   
-  while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
+  while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0) {
     printf("%s", buf);
-    Rio_writen(connfd, buf, n);
+    Rio_writen(serverfd, buf, n);
     totalByteCount += n;
   }
+  while((n = Rio_readlineb(&rio_server, buf, MAXLINE)) > 0) {
+    printf("Server pingback: %s", buf);
+    Rio_writen(connfd, buf, n);
+  }
+
+  // Exchange complete
+  Close(connfd);
+  Close(serverfd);
   printf("Total bytes received %zu", totalByteCount);
 }
 
@@ -116,19 +157,16 @@ int main(int argc, char **argv)
  */
 int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 {
-    printf("At 0");
     char *hostbegin;
     char *hostend;
     char *pathbegin;
     int len;
 
-    printf("At 1");
     if (strncasecmp(uri, "http://", 7) != 0) {
 	hostname[0] = '\0';
 	return -1;
     }
        
-    printf("At 2");
     /* Extract the host name */
     hostbegin = uri + 7;
     hostend = strpbrk(hostbegin, " :/\r\n\0");
@@ -136,13 +174,11 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
     strncpy(hostname, hostbegin, len);
     hostname[len] = '\0';
     
-    printf("At 3");
     /* Extract the port number */
     *port = 80; /* default */
     if (*hostend == ':')   
 	*port = atoi(hostend + 1);
     
-    printf("At 4");
     /* Extract the path */
     pathbegin = strchr(hostbegin, '/');
     if (pathbegin == NULL) {
@@ -153,7 +189,6 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 	strcpy(pathname, pathbegin);
     }
 
-    printf("At 5");
     return 0;
 }
 
