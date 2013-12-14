@@ -13,12 +13,13 @@
 #include "csapp.h"
 #include <string.h>
 
-#define MAXLOG 1024
 /*
  * Function prototypes
  */
 int parse_uri(char *uri, char *target_addr, char *path, int  *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
+void print_log(struct sockaddr_in *sockaddr, char *uri, int size);
+void response_controller(int connfd, struct sockaddr_in *clientaddr);
 
 /*
  * Open file to write log into
@@ -29,13 +30,13 @@ FILE *logfile;
 /*
  * respond_to_connect - takes a connfd and handles the proxy logic
  */
-void response_controller(int connfd)
+void response_controller(int connfd, struct sockaddr_in *clientaddr)
 {
   size_t n;
   int port = 0, serverfd;
   size_t totalByteCount = 0;
   char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE],
-       method[16], version[16], leadLine[MAXLINE];
+       method[16], version[16], leadLine[MAXLINE], uri[MAXLINE];
   rio_t rio_client;
   rio_t rio_server;
   Rio_readinitb(&rio_client, connfd);
@@ -48,7 +49,6 @@ void response_controller(int connfd)
   char *token;
   n = Rio_readlineb(&rio_client, buf, MAXLINE);
   printf("READ: \n%s", buf);
-  totalByteCount += n;
   Rio_writen(connfd, buf, n);
 
   // tokenize the url to send the path to parse_uri
@@ -60,6 +60,7 @@ void response_controller(int connfd)
         strcpy(method, token);
         break;
       case 1:
+        strcpy(uri, token);
         if (parse_uri(token, hostname, path+1, &port) == -1) {
           return;
         }
@@ -83,20 +84,20 @@ void response_controller(int connfd)
       buf[0] != '\r' && buf[0] != '\n') {
     printf("%s", buf);
     Rio_writen(serverfd, buf, n);
-    totalByteCount += n;
   }
-  Rio_writen(serverfd, "\r\n\r\n", 4);
+  Rio_writen(serverfd, "\r\n", 2);
 
-  printf("\nWRITE: \n%s", leadLine);
+  printf("\nRESPOND: \n%s", leadLine);
   // Read response from server
   while((n = Rio_readnb(&rio_server, buf, MAXLINE)) > 0) {
     printf("%s", buf);
     Rio_writen(connfd, buf, n);
+    totalByteCount += n;
   }
 
   // Exchange complete
   Close(serverfd);
-  printf("Total bytes received %zu", totalByteCount);
+  print_log(clientaddr, uri, totalByteCount);
 }
 
 /* 
@@ -136,7 +137,7 @@ int main(int argc, char **argv)
           sizeof(clientaddr.sin_addr.s_addr), AF_INET);
         client_ip = inet_ntoa(clientaddr.sin_addr);
         printf("Client connected to %s (%s)\n", hp->h_name, client_ip);
-        response_controller(connfd);
+        response_controller(connfd, &clientaddr);
         Close(connfd);
     }
 
@@ -222,7 +223,7 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr,
     d = host & 0xff;
 
     /* Return the formatted log entry string */
-    sprintf(logstring, "%s: %d.%d.%d.%d %s", time_str, a, b, c, d, uri);
+    sprintf(logstring, "%s: %d.%d.%d.%d %s %d\n", time_str, a, b, c, d, uri, size);
 }
 
 /*
@@ -230,9 +231,9 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr,
  */
 void print_log(struct sockaddr_in *sockaddr, char *uri, int size)
 {
-    char *logstring[MAXLOG];
-
+    char *logstring[MAXLINE];
     format_log_entry(logstring, sockaddr, uri, size);
     fprintf(logfile, logstring);
+    fflush(logfile);
 }
 
