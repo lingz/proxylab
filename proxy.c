@@ -24,13 +24,17 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
 
 FILE *logfile;
 
-void echo(int connfd)
+/*
+ * respond_to_connect - takes a connfd and handles the proxy logic
+ */
+void response_controller(int connfd)
 {
   size_t n;
   char buf[MAXLINE];
   rio_t rio;
   Rio_readinitb(&rio, connfd);
   while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
+    printf("output %s", buf);
     printf("server received %d bytes\n", n);
     Rio_writen(connfd, buf, n);
   }
@@ -57,14 +61,12 @@ int main(int argc, char **argv)
     port = atoi(argv[1]);
 
     /* bind to listening port */
-    if (listenfd = Open_listenfd(port) == -1)
+    if ((listenfd = Open_listenfd(port)) == -1)
       unix_error("Couldn't establish connection to port");
 
     /* Open fd for logfile */
     logfile = fopen("proxy.log", "a");
 
-    printf("Trying to bind to port %d\n", port);
-    listenfd = Open_listenfd(port);
     while (1) {
         clientlen = sizeof(clientaddr);
         connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
@@ -74,7 +76,7 @@ int main(int argc, char **argv)
           sizeof(clientaddr.sin_addr.s_addr), AF_INET);
         client_ip = inet_ntoa(clientaddr.sin_addr);
         printf("Client connected to %s (%s)\n", hp->h_name, client_ip);
-        echo(connfd);
+        response_controller(connfd);
         Close(connfd);
     }
 
