@@ -40,10 +40,14 @@ void response_controller(int connfd)
   rio_t rio_server;
   Rio_readinitb(&rio_client, connfd);
 
+  // fix parse_uri design flaw
+  path[0] = '/';
+
   // handle first line, extract uri
   int stageCounter = 0;
   char *token;
   n = Rio_readlineb(&rio_client, buf, MAXLINE);
+  printf("READ: \n%s", buf);
   totalByteCount += n;
   Rio_writen(connfd, buf, n);
 
@@ -56,11 +60,7 @@ void response_controller(int connfd)
         strcpy(method, token);
         break;
       case 1:
-        printf("uri: %s\n", token);
-        if (parse_uri(token, hostname, path, &port) == -1) {
-          printf("trying to close \n");
-          Close(connfd);
-          printf("done losing \n");
+        if (parse_uri(token, hostname, path+1, &port) == -1) {
           return;
         }
         break;
@@ -70,33 +70,31 @@ void response_controller(int connfd)
     }   
     token = strtok(NULL, " ");
   }
-  printf("Hostname %s, Path %s, Port %d\n", hostname, path, port);
 
   // after a successful request, connect to the server
   serverfd = Open_clientfd(hostname, port);
   Rio_readinitb(&rio_server, serverfd);
 
   // Write the initial header to the server
-  if (path[0] == '\0') {
-    path[0] = '/';
-    path[1] = '\0';
-  }
-  sprintf(leadLine, "%s %s %s\r\n", method, path, version);
-  printf("Leading line is: %s\n", leadLine);
+  sprintf(leadLine, "%s %s %s", method, path, version);
   Rio_writen(serverfd, leadLine, strlen(leadLine));
   
-  while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0) {
+  while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
+      buf[0] != '\r' && buf[0] != '\n') {
     printf("%s", buf);
     Rio_writen(serverfd, buf, n);
     totalByteCount += n;
   }
-  while((n = Rio_readlineb(&rio_server, buf, MAXLINE)) > 0) {
-    printf("Server pingback: %s", buf);
+  Rio_writen(serverfd, "\r\n", 2);
+
+  printf("\nWRITE: \n%s", leadLine);
+  // Read response from server
+  while((n = Rio_readnb(&rio_server, buf, MAXLINE)) > 0) {
+    printf("%s", buf);
     Rio_writen(connfd, buf, n);
   }
 
   // Exchange complete
-  Close(connfd);
   Close(serverfd);
   printf("Total bytes received %zu", totalByteCount);
 }
