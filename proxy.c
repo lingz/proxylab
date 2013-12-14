@@ -31,7 +31,7 @@ FILE *logfile;
 void response_controller(int connfd)
 {
   size_t n;
-  int port;
+  int port = 0;
   size_t totalByteCount = 0;
   char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE];
   rio_t rio;
@@ -39,29 +39,25 @@ void response_controller(int connfd)
 
   // handle first line, extract uri
   int stageCounter = 0;
-  char *token;
+  char uri[MAXLINE];
   n = Rio_readlineb(&rio, buf, MAXLINE);
   totalByteCount += n;
   printf("%s", buf);
   Rio_writen(connfd, buf, n);
 
-  token = strtok(buf, " ");
-  while (token != NULL) {
-    if (stageCounter++ == 1) {
-      printf("uri: %s\n", token);
-      parse_uri(token, hostname, path, &port);
-      break;
-    }
-    token = strtok(NULL, " ");
+  int i;
+  for (i=0; buf[i] != ' '; i++) {
   }
-  printf("Hostname %s, Path %s, Port %s\n", hostname, path, port);
+  printf("uri: %s\n", &buf[i]);
+  parse_uri(&buf[++i], hostname, path, &port);
+  printf("Hostname %s, Path %s, Port %d\n", hostname, path, port);
   
   while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
     printf("%s", buf);
     Rio_writen(connfd, buf, n);
     totalByteCount += n;
   }
-  printf("Total bytes received %s", totalByteCount);
+  printf("Total bytes received %zu", totalByteCount);
 }
 
 /* 
@@ -70,7 +66,8 @@ void response_controller(int connfd)
 int main(int argc, char **argv)
 {
 
-    int listenfd, connfd, port, clientlen;
+    int listenfd, connfd, port;
+    socklen_t clientlen;
     struct sockaddr_in clientaddr;
     struct hostent *hp;
     char *client_ip;
