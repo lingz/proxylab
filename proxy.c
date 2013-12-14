@@ -10,6 +10,7 @@
  */ 
 
 #include "csapp.h"
+#include <string.h>
 
 #define MAXLOG 1024
 /*
@@ -30,14 +31,37 @@ FILE *logfile;
 void response_controller(int connfd)
 {
   size_t n;
-  char buf[MAXLINE];
+  int port;
+  size_t totalByteCount = 0;
+  char buf[MAXLINE], hostname[MAXLINE], path[MAXLINE];
   rio_t rio;
   Rio_readinitb(&rio, connfd);
-  while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
-    printf("output %s", buf);
-    printf("server received %d bytes\n", n);
-    Rio_writen(connfd, buf, n);
+
+  // handle first line, extract uri
+  int stageCounter = 0;
+  char *token;
+  n = Rio_readlineb(&rio, buf, MAXLINE);
+  totalByteCount += n;
+  printf("%s", buf);
+  Rio_writen(connfd, buf, n);
+
+  token = strtok(buf, " ");
+  while (token != NULL) {
+    if (stageCounter++ == 1) {
+      printf("uri: %s\n", token);
+      parse_uri(token, hostname, path, &port);
+      break;
+    }
+    token = strtok(NULL, " ");
   }
+  printf("Hostname %s, Path %s, Port %s\n", hostname, path, port);
+  
+  while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
+    printf("%s", buf);
+    Rio_writen(connfd, buf, n);
+    totalByteCount += n;
+  }
+  printf("Total bytes received %s", totalByteCount);
 }
 
 /* 
@@ -95,16 +119,19 @@ int main(int argc, char **argv)
  */
 int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 {
+    printf("At 0");
     char *hostbegin;
     char *hostend;
     char *pathbegin;
     int len;
 
+    printf("At 1");
     if (strncasecmp(uri, "http://", 7) != 0) {
 	hostname[0] = '\0';
 	return -1;
     }
        
+    printf("At 2");
     /* Extract the host name */
     hostbegin = uri + 7;
     hostend = strpbrk(hostbegin, " :/\r\n\0");
@@ -112,11 +139,13 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
     strncpy(hostname, hostbegin, len);
     hostname[len] = '\0';
     
+    printf("At 3");
     /* Extract the port number */
     *port = 80; /* default */
     if (*hostend == ':')   
 	*port = atoi(hostend + 1);
     
+    printf("At 4");
     /* Extract the path */
     pathbegin = strchr(hostbegin, '/');
     if (pathbegin == NULL) {
@@ -127,6 +156,7 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 	strcpy(pathname, pathbegin);
     }
 
+    printf("At 5");
     return 0;
 }
 
