@@ -85,7 +85,7 @@ void response_controller(int connfd)
     Rio_writen(serverfd, buf, n);
     totalByteCount += n;
   }
-  Rio_writen(serverfd, "\r\n", 2);
+  Rio_writen(serverfd, "\r\n\r\n", 4);
 
   printf("\nWRITE: \n%s", leadLine);
   // Read response from server
