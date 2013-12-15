@@ -19,7 +19,7 @@
 int parse_uri(char *uri, char *target_addr, char *path, int  *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 void print_log(struct sockaddr_in *sockaddr, char *uri, int size);
-void response_controller(int connfd, struct sockaddr_in *clientaddr);
+void *response_controller(void *connargs);
 
 /*
  * Open file to write log into
@@ -30,8 +30,16 @@ FILE *logfile;
 /*
  * respond_to_connect - takes a connfd and handles the proxy logic
  */
-void response_controller(int connfd, struct sockaddr_in *clientaddr)
+void *response_controller(void *connargs)
 {
+  // Get passed in args and free memory and detatch thread
+  int connfd = *(int *)*(void **)connargs;
+  struct sockaddr_in *clientaddr = 
+    (struct sockaddr_in *)(connargs + sizeof(int));
+  Free(connargs);
+  Pthread_detach(Pthread_self());
+  printf("Inside 2");
+
   size_t n;
   int port = 0, serverfd;
   size_t totalByteCount = 0;
@@ -40,6 +48,8 @@ void response_controller(int connfd, struct sockaddr_in *clientaddr)
   rio_t rio_client;
   rio_t rio_server;
   Rio_readinitb(&rio_client, connfd);
+  printf("Inside 3");
+
 
   // fix parse_uri design flaw
   path[0] = '/';
@@ -97,6 +107,7 @@ void response_controller(int connfd, struct sockaddr_in *clientaddr)
 
   // Exchange complete
   Close(serverfd);
+  Close(connfd);
   print_log(clientaddr, uri, totalByteCount);
 }
 
@@ -105,12 +116,13 @@ void response_controller(int connfd, struct sockaddr_in *clientaddr)
  */
 int main(int argc, char **argv)
 {
-
     int listenfd, connfd, port;
-    socklen_t clientlen;
+    void **connargs;
+    socklen_t clientlen = sizeof(struct sockaddr_in);
     struct sockaddr_in clientaddr;
     struct hostent *hp;
     char *client_ip;
+    pthread_t tid;
 
 
     /* Check arguments */
@@ -129,16 +141,25 @@ int main(int argc, char **argv)
     logfile = fopen("proxy.log", "a");
 
     while (1) {
-        clientlen = sizeof(clientaddr);
+        printf("1");
+        // Start a new thread to handle the response
+        connargs = Malloc(2 * sizeof(void *));
         connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+        printf("2");
+
+        // set the args for response_controller
+        connargs[0] = &connfd;
+        connargs[1] = &clientaddr;
+        printf("initial connfd %d at address %d\n", connfd, &connfd);
 
         /* Get the client's network information */
         hp = Gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
           sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+        printf("4");
         client_ip = inet_ntoa(clientaddr.sin_addr);
         printf("Client connected to %s (%s)\n", hp->h_name, client_ip);
-        response_controller(connfd, &clientaddr);
-        Close(connfd);
+        Pthread_create(&tid, NULL, response_controller, (void *)connargs);
+        printf("5");
     }
 
     exit(0);
