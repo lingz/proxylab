@@ -2,13 +2,13 @@
  * proxy.c - CS:APP Web proxy
  *
  * TEAM MEMBERS:
- *     Lingliang Zhang, lz781@nyu.edu 
- *     Oleg Grishin, og402@nyu.edu 
- * 
+ *     Lingliang Zhang, lz781@nyu.edu
+ *     Oleg Grishin, og402@nyu.edu
+ *
  * IMPORTANT: A simple HTTP Proxy
  * that is able to utilize multiple threads
  * to deal with several clients at once
- */ 
+ */
 
 #include "csapp.h"
 #include <string.h>
@@ -20,12 +20,15 @@ int parse_uri(char *uri, char *target_addr, char *path, int  *port);
 void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, int size);
 void print_log(struct sockaddr_in *sockaddr, char *uri, int size);
 void *response_controller(void *connargs);
+int open_clientfd_ts(char *hostname, int port);
+
 
 /*
  * Open file to write log into
  */
 
 FILE *logfile;
+sem_t sem;
 
 /*
  * respond_to_connect - takes a connfd and handles the proxy logic
@@ -34,7 +37,7 @@ void *response_controller(void *connargs)
 {
   // Get passed in args and free memory and detatch thread
   int connfd = *(int *)*(void **)connargs;
-  struct sockaddr_in *clientaddr = 
+  struct sockaddr_in *clientaddr =
     (struct sockaddr_in *)(connargs + sizeof(int));
   Free(connargs);
   Pthread_detach(Pthread_self());
@@ -72,24 +75,24 @@ void *response_controller(void *connargs)
       case 1:
         strcpy(uri, token);
         if (parse_uri(token, hostname, path+1, &port) == -1) {
-          return;
+          return NULL;
         }
         break;
       case 2:
         strcpy(version, token);
         break;
-    }   
+    }
     token = strtok(NULL, " ");
   }
 
   // after a successful request, connect to the server
-  serverfd = Open_clientfd(hostname, port);
+  serverfd = open_clientfd_ts(hostname, port);
   Rio_readinitb(&rio_server, serverfd);
 
   // Write the initial header to the server
   sprintf(leadLine, "%s %s %s", method, path, version);
   Rio_writen(serverfd, leadLine, strlen(leadLine));
-  
+
   while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
       buf[0] != '\r' && buf[0] != '\n') {
     printf("%s", buf);
@@ -109,14 +112,29 @@ void *response_controller(void *connargs)
   Close(serverfd);
   Close(connfd);
   print_log(clientaddr, uri, totalByteCount);
+  return NULL;
 }
 
-/* 
- * main - Main routine for the proxy program 
+
+/*
+ * open_clientdf_ts - Thread safe wrapper for Open_clientfd
+ */
+int open_clientfd_ts(char *hostname, int port)
+{
+    int result;
+    printf("Hostname: %s, port: %d", hostname, port);
+    P(&sem);
+    result = Open_clientfd(hostname, port);
+    V(&sem);
+    return result;
+}
+
+/*
+ * main - Main routine for the proxy program
  */
 int main(int argc, char **argv)
 {
-    int listenfd, connfd, port;
+    int listenfd, *connfd, port;
     void **connargs;
     socklen_t clientlen = sizeof(struct sockaddr_in);
     struct sockaddr_in clientaddr;
@@ -124,6 +142,8 @@ int main(int argc, char **argv)
     char *client_ip;
     pthread_t tid;
 
+    printf("Semaphore: %d\n", sem_init(&sem, 0, 1));
+    printf("Error no: %s\n", strerror(errno));
 
     /* Check arguments */
     if (argc != 2) {
@@ -144,13 +164,14 @@ int main(int argc, char **argv)
         printf("1");
         // Start a new thread to handle the response
         connargs = Malloc(2 * sizeof(void *));
-        connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+        connfd = Malloc(sizeof(int));
+        *connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
         printf("2");
 
         // set the args for response_controller
-        connargs[0] = &connfd;
+        connargs[0] = connfd;
         connargs[1] = &clientaddr;
-        printf("initial connfd %d at address %d\n", connfd, &connfd);
+        printf("initial connfd %d at address %p\n", *connfd, connfd);
 
         /* Get the client's network information */
         hp = Gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
@@ -169,7 +190,7 @@ int main(int argc, char **argv)
 
 /*
  * parse_uri - URI parser
- * 
+ *
  * Given a URI from an HTTP proxy GET request (i.e., a URL), extract
  * the host name, path name, and port.  The memory for hostname and
  * pathname must already be allocated and should be at least MAXLINE
@@ -186,26 +207,26 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 	hostname[0] = '\0';
 	return -1;
     }
-       
+
     /* Extract the host name */
     hostbegin = uri + 7;
     hostend = strpbrk(hostbegin, " :/\r\n\0");
     len = hostend - hostbegin;
     strncpy(hostname, hostbegin, len);
     hostname[len] = '\0';
-    
+
     /* Extract the port number */
     *port = 80; /* default */
-    if (*hostend == ':')   
+    if (*hostend == ':')
 	*port = atoi(hostend + 1);
-    
+
     /* Extract the path */
     pathbegin = strchr(hostbegin, '/');
     if (pathbegin == NULL) {
 	pathname[0] = '\0';
     }
     else {
-	pathbegin++;	
+	pathbegin++;
 	strcpy(pathname, pathbegin);
     }
 
@@ -213,13 +234,13 @@ int parse_uri(char *uri, char *hostname, char *pathname, int *port)
 }
 
 /*
- * format_log_entry - Create a formatted log entry in logstring. 
- * 
+ * format_log_entry - Create a formatted log entry in logstring.
+ *
  * The inputs are the socket address of the requesting client
  * (sockaddr), the URI from the request (uri), and the size in bytes
  * of the response from the server (size).
  */
-void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, 
+void format_log_entry(char *logstring, struct sockaddr_in *sockaddr,
 		      char *uri, int size)
 {
     time_t now;
@@ -231,7 +252,7 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr,
     now = time(NULL);
     strftime(time_str, MAXLINE, "%a %d %b %Y %H:%M:%S %Z", localtime(&now));
 
-    /* 
+    /*
      * Convert the IP address in network byte order to dotted decimal
      * form. Note that we could have used inet_ntoa, but chose not to
      * because inet_ntoa is a Class 3 thread unsafe function that
