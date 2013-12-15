@@ -21,6 +21,11 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr, char *uri, 
 void print_log(struct sockaddr_in *sockaddr, char *uri, int size);
 void *response_controller(void *connargs);
 int open_clientfd_ts(char *hostname, int port);
+ssize_t Rio_readn_w(int fd, void *ptr, size_t nbytes);
+void Rio_writen_w(int fd, void *usrbuf, size_t n);
+ssize_t Rio_readnb_w(rio_t *rp, void *usrbuf, size_t n);
+ssize_t Rio_readlineb_w(rio_t *rp, void *usrbuf, size_t maxlen);
+
 
 
 /*
@@ -41,7 +46,6 @@ void *response_controller(void *connargs)
     (struct sockaddr_in *)(connargs + sizeof(int));
   Free(connargs);
   Pthread_detach(Pthread_self());
-  printf("Inside 2");
 
   size_t n;
   int port = 0, serverfd;
@@ -50,8 +54,7 @@ void *response_controller(void *connargs)
        method[16], version[16], leadLine[MAXLINE], uri[MAXLINE];
   rio_t rio_client;
   rio_t rio_server;
-  Rio_readinitb_w(&rio_client, connfd);
-  printf("Inside 3");
+  Rio_readinitb(&rio_client, connfd);
 
 
   // fix parse_uri design flaw
@@ -61,7 +64,6 @@ void *response_controller(void *connargs)
   int stageCounter = 0;
   char *token;
   n = Rio_readlineb_w(&rio_client, buf, MAXLINE);
-  printf("READ: \n%s", buf);
   Rio_writen_w(connfd, buf, n);
 
   // tokenize the url to send the path to parse_uri
@@ -75,7 +77,8 @@ void *response_controller(void *connargs)
       case 1:
         strcpy(uri, token);
         if (parse_uri(token, hostname, path+1, &port) == -1) {
-          return NULL;
+            Close(connfd);
+            return NULL;
         }
         break;
       case 2:
@@ -86,12 +89,16 @@ void *response_controller(void *connargs)
   }
 
   // after a successful request, connect to the server
-  serverfd = open_clientfd_ts(hostname, port);
-  Rio_readinitb_w(&rio_server, serverfd);
+  if ((serverfd = open_clientfd_ts(hostname, port)) < 0)
+    {
+        Close(connfd);
+        return NULL;
+    }
+  Rio_readinitb(&rio_server, serverfd);
 
   // Write the initial header to the server
   sprintf(leadLine, "%s %s %s", method, path, version);
-  Rio_writen(serverfd, leadLine, strlen(leadLine));
+  Rio_writen_w(serverfd, leadLine, strlen(leadLine));
 
   while((n = Rio_readlineb_w(&rio_client, buf, MAXLINE)) > 0 &&
       buf[0] != '\r' && buf[0] != '\n') {
@@ -103,7 +110,7 @@ void *response_controller(void *connargs)
   printf("\nRESPOND: \n%s", leadLine);
   // Read response from server
   while((n = Rio_readnb_w(&rio_server, buf, MAXLINE)) > 0) {
-    printf("%s", buf);
+    // printf("%s\n", buf);
     Rio_writen_w(connfd, buf, n);
     totalByteCount += n;
   }
@@ -134,6 +141,8 @@ int open_clientfd_ts(char *hostname, int port)
  */
 int main(int argc, char **argv)
 {
+    //SIGPIPE ignore
+    signal(SIGPIPE, SIG_IGN);
     int listenfd, *connfd, port;
     void **connargs;
     socklen_t clientlen = sizeof(struct sockaddr_in);
@@ -149,7 +158,7 @@ int main(int argc, char **argv)
 
     /* Check arguments */
     if (argc != 2) {
-      fprintf(stderr, "Usage: %s <port number>\n", argv[0]);
+      printf(stderr, "Usage: %s <port number>\n", argv[0]);
       exit(0);
     }
 
@@ -157,18 +166,16 @@ int main(int argc, char **argv)
 
     /* bind to listening port */
     if ((listenfd = Open_listenfd(port)) == -1)
-      printf("Couldn't establish connection to port");
+      unix_error("Couldn't establish connection to port");
 
     /* Open fd for logfile */
     logfile = fopen("proxy.log", "a");
 
     while (1) {
-        printf("1");
         // Start a new thread to handle the response
         connargs = Malloc(2 * sizeof(void *));
         connfd = Malloc(sizeof(int));
         *connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
-        printf("2");
 
         // set the args for response_controller
         connargs[0] = connfd;
@@ -178,11 +185,9 @@ int main(int argc, char **argv)
         /* Get the client's network information */
         hp = Gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
           sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-        printf("4");
         client_ip = inet_ntoa(clientaddr.sin_addr);
         printf("Client connected to %s (%s)\n", hp->h_name, client_ip);
         Pthread_create(&tid, NULL, response_controller, (void *)connargs);
-        printf("5");
     }
 
     exit(0);
@@ -301,11 +306,6 @@ void Rio_writen_w(int fd, void *usrbuf, size_t n)
 {
     if (rio_writen(fd, usrbuf, n) != n)
     printf("Rio_writen error");
-}
-
-void Rio_readinitb_w(rio_t *rp, int fd)
-{
-    rio_readinitb(rp, fd);
 }
 
 ssize_t Rio_readnb_w(rio_t *rp, void *usrbuf, size_t n)
