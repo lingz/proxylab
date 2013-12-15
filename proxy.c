@@ -28,7 +28,7 @@ int open_clientfd_ts(char *hostname, int port);
  */
 
 FILE *logfile;
-sem_t sem;
+sem_t sem, sem_log;
 
 /*
  * respond_to_connect - takes a connfd and handles the proxy logic
@@ -50,7 +50,7 @@ void *response_controller(void *connargs)
        method[16], version[16], leadLine[MAXLINE], uri[MAXLINE];
   rio_t rio_client;
   rio_t rio_server;
-  Rio_readinitb(&rio_client, connfd);
+  Rio_readinitb_w(&rio_client, connfd);
   printf("Inside 3");
 
 
@@ -60,9 +60,9 @@ void *response_controller(void *connargs)
   // handle first line, extract uri
   int stageCounter = 0;
   char *token;
-  n = Rio_readlineb(&rio_client, buf, MAXLINE);
+  n = Rio_readlineb_w(&rio_client, buf, MAXLINE);
   printf("READ: \n%s", buf);
-  Rio_writen(connfd, buf, n);
+  Rio_writen_w(connfd, buf, n);
 
   // tokenize the url to send the path to parse_uri
   token = strtok(buf, " ");
@@ -87,24 +87,24 @@ void *response_controller(void *connargs)
 
   // after a successful request, connect to the server
   serverfd = open_clientfd_ts(hostname, port);
-  Rio_readinitb(&rio_server, serverfd);
+  Rio_readinitb_w(&rio_server, serverfd);
 
   // Write the initial header to the server
   sprintf(leadLine, "%s %s %s", method, path, version);
   Rio_writen(serverfd, leadLine, strlen(leadLine));
 
-  while((n = Rio_readlineb(&rio_client, buf, MAXLINE)) > 0 &&
+  while((n = Rio_readlineb_w(&rio_client, buf, MAXLINE)) > 0 &&
       buf[0] != '\r' && buf[0] != '\n') {
     printf("%s", buf);
-    Rio_writen(serverfd, buf, n);
+    Rio_writen_w(serverfd, buf, n);
   }
-  Rio_writen(serverfd, "\r\n", 2);
+  Rio_writen_w(serverfd, "\r\n", 2);
 
   printf("\nRESPOND: \n%s", leadLine);
   // Read response from server
-  while((n = Rio_readnb(&rio_server, buf, MAXLINE)) > 0) {
+  while((n = Rio_readnb_w(&rio_server, buf, MAXLINE)) > 0) {
     printf("%s", buf);
-    Rio_writen(connfd, buf, n);
+    Rio_writen_w(connfd, buf, n);
     totalByteCount += n;
   }
 
@@ -144,6 +144,8 @@ int main(int argc, char **argv)
 
     printf("Semaphore: %d\n", sem_init(&sem, 0, 1));
     printf("Error no: %s\n", strerror(errno));
+    printf("Semaphore: %d\n", sem_init(&sem_log, 0, 1));
+    printf("Error no: %s\n", strerror(errno));
 
     /* Check arguments */
     if (argc != 2) {
@@ -155,7 +157,7 @@ int main(int argc, char **argv)
 
     /* bind to listening port */
     if ((listenfd = Open_listenfd(port)) == -1)
-      unix_error("Couldn't establish connection to port");
+      printf("Couldn't establish connection to port");
 
     /* Open fd for logfile */
     logfile = fopen("proxy.log", "a");
@@ -275,7 +277,51 @@ void print_log(struct sockaddr_in *sockaddr, char *uri, int size)
 {
     char *logstring[MAXLINE];
     format_log_entry(logstring, sockaddr, uri, size);
+    P(&sem_log);
     fprintf(logfile, logstring);
     fflush(logfile);
+    V(&sem_log);
 }
 
+
+
+/**********************************
+ * Wrappers for robust I/O routines rewritten
+ **********************************/
+ssize_t Rio_readn_w(int fd, void *ptr, size_t nbytes)
+{
+    ssize_t n;
+
+    if ((n = rio_readn(fd, ptr, nbytes)) < 0)
+    printf("Rio_readn error");
+    return n;
+}
+
+void Rio_writen_w(int fd, void *usrbuf, size_t n)
+{
+    if (rio_writen(fd, usrbuf, n) != n)
+    printf("Rio_writen error");
+}
+
+void Rio_readinitb_w(rio_t *rp, int fd)
+{
+    rio_readinitb(rp, fd);
+}
+
+ssize_t Rio_readnb_w(rio_t *rp, void *usrbuf, size_t n)
+{
+    ssize_t rc;
+
+    if ((rc = rio_readnb(rp, usrbuf, n)) < 0)
+    printf("Rio_readnb error");
+    return rc;
+}
+
+ssize_t Rio_readlineb_w(rio_t *rp, void *usrbuf, size_t maxlen)
+{
+    ssize_t rc;
+
+    if ((rc = rio_readlineb(rp, usrbuf, maxlen)) < 0)
+    printf("Rio_readlineb error");
+    return rc;
+}
