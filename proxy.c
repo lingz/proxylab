@@ -186,7 +186,7 @@ int main(int argc, char **argv)
         hp = Gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr,
           sizeof(clientaddr.sin_addr.s_addr), AF_INET);
         client_ip = inet_ntoa(clientaddr.sin_addr);
-        printf("Client connected to %s (%s)\n", hp->h_name, client_ip);
+        // printf("Client connected to %s (%s)\n", hp->h_name, client_ip); -> makes segmentation fault
         Pthread_create(&tid, NULL, response_controller, (void *)connargs);
     }
 
@@ -280,10 +280,10 @@ void format_log_entry(char *logstring, struct sockaddr_in *sockaddr,
  */
 void print_log(struct sockaddr_in *sockaddr, char *uri, int size)
 {
-    char *logstring[MAXLINE];
+    char logstring[MAXLINE];
     format_log_entry(logstring, sockaddr, uri, size);
     P(&sem_log);
-    fprintf(logfile, logstring);
+    fprintf(logfile, "%s", logstring);
     fflush(logfile);
     V(&sem_log);
 }
